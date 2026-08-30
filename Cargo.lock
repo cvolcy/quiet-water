@@ -4842,6 +4842,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
+name = "quiet-water"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "hound",
+ "reqwest 0.12.28",
+ "rig",
+ "tokio",
+ "whisper-rs",
+]
+
+[[package]]
 name = "quinn"
 version = "0.11.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4896,19 +4909,6 @@ dependencies = [
  "socket2",
  "tracing",
  "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "quite-water"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "hound",
- "reqwest 0.12.28",
- "rig",
- "tokio",
- "whisper-rs",
 ]
 
 [[package]]
