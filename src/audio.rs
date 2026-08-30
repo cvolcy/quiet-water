@@ -45,7 +45,7 @@ pub fn transcribe_audio(audio_path: &Path, model_path: &Path) -> Result<String> 
     Ok(transcript.lock().unwrap().clone())
 }
 
-fn read_wav_samples<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {
+pub fn read_wav_samples<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {
     let mut reader = WavReader::open(path)?;
     let spec = reader.spec();
 
@@ -86,7 +86,7 @@ fn read_wav_samples<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {
     Ok(samples?)
 }
 
-fn to_duration_format(centiseconds: i64) -> String {
+pub fn to_duration_format(centiseconds: i64) -> String {
     let total_secs = centiseconds / 100;
     let cs = centiseconds % 100;
 
