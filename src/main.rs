@@ -1,10 +1,22 @@
 use hound::{SampleFormat, WavReader};
-use std::{fs, io, path::Path};
+use rig::{
+    client::{AgentClientExt, Nothing},
+    completion::Prompt,
+    providers::ollama,
+};
+use std::{
+    fs, io,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+const TRANSCRIPT_PROMPT_PATH: &str = "./src/transcriptor.md";
+const SUMMARY_OUTPUT_PATH: &str = "./outputs/summary.md";
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     whisper_rs::install_logging_hooks();
 
     let model_path = Path::new("./models/ggml-base.bin");
@@ -30,13 +42,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     params.set_print_timestamps(false);
     params.set_print_realtime(false);
 
-    params.set_segment_callback_safe_lossy(|segment: whisper_rs::SegmentCallbackData| {
+    let transcript = Arc::new(Mutex::new(String::new()));
+    let transcript_for_callback = Arc::clone(&transcript);
+
+    params.set_segment_callback_safe_lossy(move |segment: whisper_rs::SegmentCallbackData| {
         println!(
             "[{} - {}]: {}",
             to_duration_format(segment.start_timestamp),
             to_duration_format(segment.end_timestamp),
             segment.text
         );
+
+        let mut buffer = transcript_for_callback.lock().unwrap();
+        buffer.push_str(&segment.text);
+        buffer.push(' ');
     });
 
     println!("--- Transcribing (Streaming) ---");
@@ -44,7 +63,43 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.full(params, &samples[..])?;
 
     println!("\n--- Done ---");
+
+    let raw_transcript = transcript.lock().unwrap().clone();
+    let summary = summarize_transcript(&raw_transcript).await?;
+    fs::create_dir_all(Path::new("./outputs"))?;
+    fs::write(SUMMARY_OUTPUT_PATH, &summary)?;
+
+    println!("\n--- Summary ---\n{summary}\n");
+    println!("Summary saved to {}", SUMMARY_OUTPUT_PATH);
     Ok(())
+}
+
+async fn summarize_transcript(raw_transcript: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let client = ollama::Client::new(Nothing)?;
+    let instructions = load_transcription_instructions()?;
+
+    let agent = client
+        .agent("gemma4:12b")
+        .preamble(&instructions)
+        .build();
+
+    let summary = agent.prompt(raw_transcript).await?;
+    Ok(summary)
+}
+
+fn load_transcription_instructions() -> Result<String, Box<dyn std::error::Error>> {
+    let raw = fs::read_to_string(TRANSCRIPT_PROMPT_PATH)?;
+    let instructions = raw
+        .split("## Raw Transcript:")
+        .next()
+        .unwrap_or(&raw)
+        .trim();
+
+    if instructions.is_empty() {
+        return Err("Transcript instruction file is empty or malformed.".into());
+    }
+
+    Ok(instructions.to_string())
 }
 
 fn ensure_model_exists(model_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
