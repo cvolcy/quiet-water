@@ -1,12 +1,16 @@
 use hound::{SampleFormat, WavReader};
-use std::path::Path;
+use std::{fs, io, path::Path};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+
+const MODEL_URL: &str = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     whisper_rs::install_logging_hooks();
 
     let model_path = Path::new("./models/ggml-base.bin");
     let audio_path = Path::new("./files/audio.wav");
+
+    ensure_model_exists(model_path)?;
 
     let ctx = WhisperContext::new_with_params(
         model_path
@@ -40,6 +44,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     state.full(params, &samples[..])?;
 
     println!("\n--- Done ---");
+    Ok(())
+}
+
+fn ensure_model_exists(model_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    if model_path.exists() {
+        return Ok(());
+    }
+
+    if let Some(parent) = model_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    println!("Downloading model to {}...", model_path.display());
+
+    let response = reqwest::blocking::get(MODEL_URL)?;
+    if !response.status().is_success() {
+        return Err(format!("Failed to download model: HTTP {}", response.status()).into());
+    }
+
+    let bytes = response.bytes()?;
+    let mut file = fs::File::create(model_path)?;
+    io::copy(&mut bytes.as_ref(), &mut file)?;
+
+    println!("Model downloaded successfully.");
     Ok(())
 }
 
