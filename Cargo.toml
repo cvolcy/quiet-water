@@ -1,0 +1,8 @@
+[package]
+name = "quite-water"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+whisper-rs = { version = "0.16.0"}
+hound = "3.5.1"
