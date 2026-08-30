@@ -1,12 +1,13 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
 use rig::{
     client::{AgentClientExt, Nothing},
     completion::Prompt,
     providers::ollama,
 };
-use std::{fs, path::Path};
+use std::{fs, path::{Path, PathBuf}};
 
-pub const SUMMARY_OUTPUT_PATH: &str = "./outputs/summary.md";
+pub const SUMMARY_OUTPUT_DIR: &str = "./outputs";
 const TRANSCRIPT_PROMPT_PATH: &str = "./src/transcriptor.md";
 
 pub async fn summarize_transcript(raw_transcript: &str) -> Result<String> {
@@ -21,13 +22,18 @@ pub async fn summarize_transcript(raw_transcript: &str) -> Result<String> {
     Ok(agent.prompt(raw_transcript).await?)
 }
 
-pub fn write_summary(summary: &str) -> Result<()> {
-    let output_path = Path::new(SUMMARY_OUTPUT_PATH);
+pub fn write_summary(summary: &str) -> Result<PathBuf> {
+    let output_path = timestamped_summary_path();
     if let Some(parent) = output_path.parent() {
         fs::create_dir_all(parent).context("Failed to create output directory")?;
     }
-    fs::write(output_path, summary).context("Failed to write summary file")?;
-    Ok(())
+    fs::write(&output_path, summary).context("Failed to write summary file")?;
+    Ok(output_path)
+}
+
+fn timestamped_summary_path() -> PathBuf {
+    let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+    Path::new(SUMMARY_OUTPUT_DIR).join(format!("summary-{timestamp}.md"))
 }
 
 fn load_transcription_instructions() -> Result<String> {

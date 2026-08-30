@@ -18,9 +18,9 @@ async fn main() -> Result<()> {
     println!("\n--- Done ---");
 
     let summary = summary::summarize_transcript(&transcript).await?;
-    summary::write_summary(&summary)?;
+    let output_path = summary::write_summary(&summary)?;
 
     println!("\n--- Summary ---\n{summary}\n");
-    println!("Summary saved to {}", summary::SUMMARY_OUTPUT_PATH);
+    println!("Summary saved to {}", output_path.display());
     Ok(())
 }

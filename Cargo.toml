@@ -10,3 +10,4 @@ reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
 rig = "0.42.0"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 anyhow = "1.0"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
