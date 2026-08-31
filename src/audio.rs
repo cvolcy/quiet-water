@@ -1,11 +1,19 @@
 use anyhow::{Context, Result};
 use hound::{SampleFormat, WavReader};
-use std::{path::Path, sync::{Arc, Mutex}};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
+};
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
 };
 
 pub fn transcribe_audio(audio_path: &Path, model_path: &Path) -> Result<String> {
+    let samples = read_wav_samples(audio_path)?;
+    transcribe_samples(&samples, model_path)
+}
+
+pub fn transcribe_samples(samples: &[f32], model_path: &Path) -> Result<String> {
     let ctx = WhisperContext::new_with_params(
         model_path
             .to_str()
@@ -14,7 +22,6 @@ pub fn transcribe_audio(audio_path: &Path, model_path: &Path) -> Result<String> 
     )?;
     let mut state = ctx.create_state()?;
 
-    let samples = read_wav_samples(audio_path)?;
     let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
     params.set_language(None);
     params.set_debug_mode(false);
@@ -40,9 +47,55 @@ pub fn transcribe_audio(audio_path: &Path, model_path: &Path) -> Result<String> 
     });
 
     println!("--- Transcribing (Streaming) ---");
-    state.full(params, &samples[..])?;
+    state.full(params, samples)?;
 
     Ok(transcript.lock().unwrap().clone())
+}
+
+pub fn chunk_samples(
+    samples: &[f32],
+    sample_rate: u32,
+    chunk_duration_seconds: u32,
+    overlap_seconds: u32,
+) -> Vec<Vec<f32>> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+
+    if sample_rate == 0 || chunk_duration_seconds == 0 {
+        return vec![samples.to_vec()];
+    }
+
+    let chunk_size = sample_rate as usize * chunk_duration_seconds as usize;
+    let overlap = sample_rate as usize * overlap_seconds.min(chunk_duration_seconds) as usize;
+    let step = chunk_size.saturating_sub(overlap).max(1);
+
+    let mut chunks = Vec::new();
+    let mut start = 0usize;
+
+    while start < samples.len() {
+        let end = (start + chunk_size).min(samples.len());
+        chunks.push(samples[start..end].to_vec());
+
+        if end == samples.len() {
+            break;
+        }
+
+        start += step;
+        if start >= samples.len() {
+            let tail_start = samples.len().saturating_sub(chunk_size.min(samples.len()));
+            if tail_start < samples.len() {
+                chunks.push(samples[tail_start..].to_vec());
+            }
+            break;
+        }
+    }
+
+    if chunks.is_empty() {
+        vec![samples.to_vec()]
+    } else {
+        chunks
+    }
 }
 
 pub fn read_wav_samples<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {

@@ -13,13 +13,29 @@ pub async fn run() -> Result<()> {
 
     model::ensure_model_exists(model_path)?;
 
-    let transcript = audio::transcribe_audio(audio_path, model_path)?;
+    let samples = audio::read_wav_samples(audio_path)?;
+    let chunks = audio::chunk_samples(&samples, 16_000, 30, 5);
+
+    let mut cumulative_transcript = String::new();
+    let total_chunks = chunks.len();
+
+    println!("--- Transcribing {} chunks ---", total_chunks);
+    for (index, chunk) in chunks.iter().enumerate() {
+        let chunk_transcript = audio::transcribe_samples(chunk, model_path)?;
+        let trimmed = chunk_transcript.trim();
+
+        if !trimmed.is_empty() {
+            cumulative_transcript.push_str(trimmed);
+            cumulative_transcript.push(' ');
+        }
+
+        let summary = summary::summarize_transcript(&cumulative_transcript).await?;
+        let output_path = summary::write_summary(&summary)?;
+
+        println!("\n--- Summary after chunk {} of {} ---\n{summary}\n", index + 1, total_chunks);
+        println!("Summary saved to {}", output_path.display());
+    }
+
     println!("\n--- Done ---");
-
-    let summary = summary::summarize_transcript(&transcript).await?;
-    let output_path = summary::write_summary(&summary)?;
-
-    println!("\n--- Summary ---\n{summary}\n");
-    println!("Summary saved to {}", output_path.display());
     Ok(())
 }

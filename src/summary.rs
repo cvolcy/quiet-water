@@ -5,7 +5,7 @@ use rig::{
     completion::Prompt,
     providers::ollama,
 };
-use std::{fs, path::{Path, PathBuf}};
+use std::{ collections::HashMap, fs, path::{Path, PathBuf}, sync::{Mutex, OnceLock }};
 
 pub const SUMMARY_OUTPUT_DIR: &str = "./outputs";
 const TRANSCRIPT_PROMPT_PATH: &str = "./src/transcriptor.md";
@@ -23,17 +23,29 @@ pub async fn summarize_transcript(raw_transcript: &str) -> Result<String> {
 }
 
 pub fn write_summary(summary: &str) -> Result<PathBuf> {
-    let output_path = timestamped_summary_path();
+    let output_path = timestamped_summary_path(Path::new(SUMMARY_OUTPUT_DIR));
     write_summary_to_path(summary, &output_path)
 }
 
 pub fn write_summary_to_dir(summary: &str, output_dir: &Path) -> Result<PathBuf> {
-    let output_path = timestamped_summary_path_in(output_dir);
+    let output_path = timestamped_summary_path(output_dir);
     write_summary_to_path(summary, &output_path)
 }
 
-fn timestamped_summary_path() -> PathBuf {
-    timestamped_summary_path_in(Path::new(SUMMARY_OUTPUT_DIR))
+fn timestamped_summary_path(output_dir: &Path) -> PathBuf {
+    static SUMMARY_PATH_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+
+    let cache = SUMMARY_PATH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let key = output_dir.to_string_lossy().to_string();
+    let mut cache = cache.lock().unwrap();
+
+    cache
+        .entry(key)
+        .or_insert_with(|| {
+            let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+            output_dir.join(format!("summary-{timestamp}.md"))
+        })
+        .clone()
 }
 
 fn write_summary_to_path(summary: &str, output_path: &Path) -> Result<PathBuf> {
@@ -47,6 +59,10 @@ fn write_summary_to_path(summary: &str, output_path: &Path) -> Result<PathBuf> {
 pub fn timestamped_summary_path_in(output_dir: &Path) -> PathBuf {
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
     output_dir.join(format!("summary-{timestamp}.md"))
+}
+
+pub fn archived_summary_path_in(output_dir: &Path) -> PathBuf {
+    timestamped_summary_path_in(output_dir)
 }
 
 fn load_transcription_instructions() -> Result<String> {

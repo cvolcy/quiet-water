@@ -31,6 +31,11 @@ fn write_summary_to_dir_creates_file_and_parent_directory() {
     let output_path = write_summary_to_dir(summary, &output_dir).unwrap();
 
     assert!(output_path.starts_with(&output_dir));
+    assert!(output_path
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .starts_with("summary-"));
     assert!(output_path.is_file());
     assert_eq!(fs::read_to_string(&output_path).unwrap(), summary);
 }
@@ -48,4 +53,15 @@ fn generated_summary_name_starts_with_summary_prefix() {
         .to_string_lossy()
         .starts_with("summary-"));
     assert_eq!(output_path.extension().and_then(|ext| ext.to_str()), Some("md"));
+}
+
+#[test]
+fn write_summary_to_dir_overwrites_the_same_summary_file() {
+    let output_dir = unique_test_dir("quiet-water-refresh");
+
+    let first = write_summary_to_dir("# first", &output_dir).unwrap();
+    let second = write_summary_to_dir("# second", &output_dir).unwrap();
+
+    assert_eq!(first, second);
+    assert_eq!(fs::read_to_string(&second).unwrap(), "# second");
 }
