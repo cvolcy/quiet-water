@@ -15,7 +15,7 @@ pub async fn summarize_transcript(raw_transcript: &str) -> Result<String> {
     let instructions = load_transcription_instructions()?;
 
     let agent = client
-        .agent("gemma4:12b")
+        .agent("gemma4:e4b")
         .preamble(&instructions)
         .build();
 
