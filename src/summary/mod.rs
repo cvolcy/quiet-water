@@ -1,3 +1,7 @@
+pub mod summary_service;
+
+pub use summary_service::SummaryService;
+
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rig::{
