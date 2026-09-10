@@ -73,6 +73,32 @@ impl SummaryService {
             }
         }
     }
+
+    // pub fn write_summary(&self, summary: &str) -> Result<PathBuf> {
+    //     self.write_summary_to_dir(summary, &self.output_dir)
+    // }
+
+    // pub fn write_summary_to_dir(&self, summary: &str, output_dir: &Path) -> Result<PathBuf> {
+    //     let output_path = self.timestamped_summary_path_in(output_dir);
+    //     self.write_summary_to_path(summary, &output_path)
+    // }
+
+    // pub fn write_summary_to_path(&self, summary: &str, output_path: &Path) -> Result<PathBuf> {
+    //     if let Some(parent) = output_path.parent() {
+    //         fs::create_dir_all(parent).context("Failed to create output directory")?;
+    //     }
+    //     fs::write(output_path, summary).context("Failed to write summary file")?;
+    //     Ok(output_path.to_path_buf())
+    // }
+
+    // pub fn timestamped_summary_path_in(&self, output_dir: &Path) -> PathBuf {
+    //     let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+    //     output_dir.join(format!("summary-{timestamp}.md"))
+    // }
+
+    // pub fn archived_summary_path_in(&self, output_dir: &Path) -> PathBuf {
+    //     self.timestamped_summary_path_in(output_dir)
+    // }
 }
 
 impl Default for SummaryService {
