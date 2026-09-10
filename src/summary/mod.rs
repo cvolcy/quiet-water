@@ -10,25 +10,21 @@ use std::{ collections::HashMap, fs, path::{Path, PathBuf}, sync::{Mutex, OnceLo
 pub const SUMMARY_OUTPUT_DIR: &str = "./outputs";
 const TRANSCRIPT_PROMPT_PATH: &str = "./src/transcriptor.md";
 
-pub async fn summarize_transcript(raw_transcript: &str) -> Result<String> {
+pub async fn summarize_transcript(raw_transcript: &str, model_name: Option<&str>) -> Result<String> {
+    let model_name = model_name.unwrap_or("gemma4:e4b");
     let client = ollama::Client::new(Nothing)?;
     let instructions = load_transcription_instructions()?;
 
     let agent = client
-        .agent("gemma4:e4b")
+        .agent(model_name)
         .preamble(&instructions)
         .build();
 
     Ok(agent.prompt(raw_transcript).await?)
 }
 
-pub fn write_summary(summary: &str) -> Result<PathBuf> {
-    let output_path = timestamped_summary_path(Path::new(SUMMARY_OUTPUT_DIR));
-    write_summary_to_path(summary, &output_path)
-}
-
-pub fn write_summary_to_dir(summary: &str, output_dir: &Path) -> Result<PathBuf> {
-    let output_path = timestamped_summary_path(output_dir);
+pub fn write_summary(summary: &str, output_path: Option<&Path>) -> Result<PathBuf> {
+    let output_path = timestamped_summary_path(output_path.unwrap_or(Path::new(SUMMARY_OUTPUT_DIR)));
     write_summary_to_path(summary, &output_path)
 }
 
@@ -59,10 +55,6 @@ fn write_summary_to_path(summary: &str, output_path: &Path) -> Result<PathBuf> {
 pub fn timestamped_summary_path_in(output_dir: &Path) -> PathBuf {
     let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
     output_dir.join(format!("summary-{timestamp}.md"))
-}
-
-pub fn archived_summary_path_in(output_dir: &Path) -> PathBuf {
-    timestamped_summary_path_in(output_dir)
 }
 
 fn load_transcription_instructions() -> Result<String> {
