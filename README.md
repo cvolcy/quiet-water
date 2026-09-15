@@ -74,5 +74,21 @@ ollama pull gemma4:12b
 ### Run the app
 
 ```bash
-cargo run
+cargo run -- --input-audio ./files/audio.wav
 ```
+
+Optional arguments:
+
+```bash
+cargo run -- \
+  --input-audio ./files/audio.wav \
+  --output-dir ./outputs \
+  --whisper-model-path ./models/ggml-base.bin \
+  --model gemma4:e4b
+```
+
+Defaults:
+
+- output directory: `./outputs`
+- Whisper model: `./models/ggml-base.bin`
+- Ollama model: `gemma4:e4b`

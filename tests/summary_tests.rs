@@ -1,5 +1,5 @@
 use quiet_water::summary::{
-    load_transcription_instructions_from_path, timestamped_summary_path_in, write_summary_to_dir,
+    load_transcription_instructions_from_path, timestamped_summary_path_in, write_summary,
 };
 use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
 
@@ -28,8 +28,8 @@ fn write_summary_to_dir_creates_file_and_parent_directory() {
     let output_dir = unique_test_dir("quiet-water-summary");
     let summary = "# Executive summary\n\n- Done";
 
-    let output_path = write_summary_to_dir(summary, &output_dir).unwrap();
-
+    let output_path = write_summary(summary, Some(&output_dir)).unwrap();
+    println!("Summary written to: {}", output_path.display());
     assert!(output_path.starts_with(&output_dir));
     assert!(output_path
         .file_name()
@@ -59,8 +59,8 @@ fn generated_summary_name_starts_with_summary_prefix() {
 fn write_summary_to_dir_overwrites_the_same_summary_file() {
     let output_dir = unique_test_dir("quiet-water-refresh");
 
-    let first = write_summary_to_dir("# first", &output_dir).unwrap();
-    let second = write_summary_to_dir("# second", &output_dir).unwrap();
+    let first = write_summary("# first", Some(&output_dir)).unwrap();
+    let second = write_summary("# second", Some(&output_dir)).unwrap();
 
     assert_eq!(first, second);
     assert_eq!(fs::read_to_string(&second).unwrap(), "# second");
