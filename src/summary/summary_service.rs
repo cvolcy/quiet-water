@@ -1,9 +1,14 @@
 use anyhow::{Context, Result};
+use chrono::Utc;
+use clap::Parser;
 use rig::{
     agent::Agent, client::{AgentClientExt, Nothing}, completion::{Prompt, PromptError}, providers::ollama,
 };
-use std::{fs, path::{Path, PathBuf}};
+use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{Mutex, OnceLock}};
 
+use crate::cli::CliArgs;
+
+const SUMMARY_OUTPUT_DIR: &str = "./outputs";
 const TRANSCRIPT_PROMPT_PATH: &str = "./src/transcriptor.md";
 
 pub struct SummaryService {
@@ -15,21 +20,14 @@ pub struct SummaryService {
 
 impl SummaryService {
     pub fn new() -> Self {
-        
-        let instructions = SummaryService::load_transcription_instructions(Path::new(TRANSCRIPT_PROMPT_PATH))
-            .unwrap_or_else(|e| panic!("Failed to load transcription instructions: {}", e));
-        let client = ollama::Client::new(Nothing)
-            .unwrap_or_else(|e| panic!("Failed to create Ollama client: {}", e));
-        
-        let agent = client.agent("gemma4:e4b")
-            .preamble(&instructions)
-            .build();
+        let default_args = vec!["", "--input-audio", "./default"];
+        let args = CliArgs::parse_from(default_args);
 
         Self {
-            model_name: "gemma4:e4b".to_string(),
+            model_name: args.model,
             prompt_path: PathBuf::from("./src/transcriptor.md"),
             output_dir: PathBuf::from("./outputs"),
-            agent: Some(agent),
+            agent: None,
         }
     }
 
@@ -63,42 +61,57 @@ impl SummaryService {
         Ok(instructions.to_string())
     }
 
-    pub async fn summarize_transcript(&self, raw_transcript: &str) -> Result<String, PromptError> {
-        match &self.agent {
-            Some(agent) => {
-                Ok(agent.prompt(raw_transcript).await?)
-            }
-            None => {
-                Err(PromptError::PromptCancelled { chat_history: vec![], reason: String::from("Agent not initialized") })
-            }
-        }
+    pub async fn summarize_transcript(&mut self, raw_transcript: &str) -> Result<String, PromptError> {
+        let agent = self.get_agent();
+        Ok(agent.prompt(raw_transcript).await?)
     }
 
-    // pub fn write_summary(&self, summary: &str) -> Result<PathBuf> {
-    //     self.write_summary_to_dir(summary, &self.output_dir)
-    // }
+    pub fn get_agent(&mut self) -> &Agent {
+        if self.agent.is_none() {
+            let instructions = SummaryService::load_transcription_instructions(Path::new(TRANSCRIPT_PROMPT_PATH))
+                .unwrap_or_else(|e| panic!("Failed to load transcription instructions: {}", e));
+                
+            let client = ollama::Client::new(Nothing)
+                .unwrap_or_else(|e| panic!("Failed to create Ollama client: {}", e));
+            
+            let agent = client.agent(self.model_name.clone())
+                .preamble(&instructions)
+                .build();
 
-    // pub fn write_summary_to_dir(&self, summary: &str, output_dir: &Path) -> Result<PathBuf> {
-    //     let output_path = self.timestamped_summary_path_in(output_dir);
-    //     self.write_summary_to_path(summary, &output_path)
-    // }
+            self.agent = Some(agent);
+        }
 
-    // pub fn write_summary_to_path(&self, summary: &str, output_path: &Path) -> Result<PathBuf> {
-    //     if let Some(parent) = output_path.parent() {
-    //         fs::create_dir_all(parent).context("Failed to create output directory")?;
-    //     }
-    //     fs::write(output_path, summary).context("Failed to write summary file")?;
-    //     Ok(output_path.to_path_buf())
-    // }
+        self.agent.as_ref().unwrap()
+    }
 
-    // pub fn timestamped_summary_path_in(&self, output_dir: &Path) -> PathBuf {
-    //     let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
-    //     output_dir.join(format!("summary-{timestamp}.md"))
-    // }
+    pub fn write_summary(&self, summary: &str, output_path: Option<&Path>) -> Result<PathBuf> {
+        let output_path = SummaryService::timestamped_summary_path(output_path.unwrap_or(Path::new(SUMMARY_OUTPUT_DIR)));
+        SummaryService::write_summary_to_path(summary, &output_path)
+    }
 
-    // pub fn archived_summary_path_in(&self, output_dir: &Path) -> PathBuf {
-    //     self.timestamped_summary_path_in(output_dir)
-    // }
+    fn write_summary_to_path(summary: &str, output_path: &Path) -> Result<PathBuf> {
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent).context("Failed to create output directory")?;
+        }
+        fs::write(output_path, summary).context("Failed to write summary file")?;
+        Ok(output_path.to_path_buf())
+    }
+
+    fn timestamped_summary_path(output_dir: &Path) -> PathBuf {
+        static SUMMARY_PATH_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::new();
+
+        let cache = SUMMARY_PATH_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+        let key = output_dir.to_string_lossy().to_string();
+        let mut cache = cache.lock().unwrap();
+
+        cache
+            .entry(key)
+            .or_insert_with(|| {
+                let timestamp = Utc::now().format("%Y%m%d-%H%M%S");
+                output_dir.join(format!("summary-{timestamp}.md"))
+            })
+            .clone()
+    }
 }
 
 impl Default for SummaryService {
@@ -110,6 +123,15 @@ impl Default for SummaryService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn unique_test_dir(prefix: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("{prefix}-{nanos}-{}", std::process::id()))
+    }
 
     #[test]
     fn test_default_initialization() {
@@ -120,9 +142,9 @@ mod tests {
 
         // Assert
         assert_eq!(service.model_name, "gemma4:e4b");
-        assert_eq!(service.prompt_path, PathBuf::from("./src/transcriptor.md"));
-        assert_eq!(service.output_dir, PathBuf::from("./outputs"));
-        assert!(service.agent.is_some(), "Agent should be initialized");
+        assert_eq!(service.prompt_path, PathBuf::from(TRANSCRIPT_PROMPT_PATH));
+        assert_eq!(service.output_dir, PathBuf::from(SUMMARY_OUTPUT_DIR));
+        assert!(service.agent.is_none(), "Agent should not be initialized by default");
     }
 
     #[test]
@@ -134,9 +156,9 @@ mod tests {
 
         // Assert
         assert_eq!(service.model_name, "gemma4:e4b");
-        assert_eq!(service.prompt_path, PathBuf::from("./src/transcriptor.md"));
-        assert_eq!(service.output_dir, PathBuf::from("./outputs"));
-        assert!(service.agent.is_some(), "Agent should be initialized");
+        assert_eq!(service.prompt_path, PathBuf::from(TRANSCRIPT_PROMPT_PATH));
+        assert_eq!(service.output_dir, PathBuf::from(SUMMARY_OUTPUT_DIR));
+        assert!(service.agent.is_none(), "Agent should not be initialized by default");
     }
 
     #[test]
@@ -198,5 +220,71 @@ mod tests {
         assert_eq!(configured_service.model_name, target_model);
         assert_eq!(configured_service.prompt_path, PathBuf::from(target_prompt));
         assert_eq!(configured_service.output_dir, PathBuf::from(target_output));
+    }
+
+    #[test]
+    fn loads_instructions_before_raw_transcript_marker() {
+        let path = unique_test_dir("quiet-water-instructions");
+        let content = "Write a summary.\n\n## Raw Transcript:\nThis is ignored.";
+
+        fs::write(&path, content).unwrap();
+
+        let instructions = SummaryService::load_transcription_instructions(&path).unwrap();
+        assert_eq!(instructions, "Write a summary.");
+    }
+
+    #[test]
+    fn write_summary_to_dir_creates_file_and_parent_directory() {
+        let output_dir = unique_test_dir("quiet-water-summary");
+        let summary = "# Executive summary\n\n- Done";
+        let service = SummaryService {
+            model_name: String::new(),
+            prompt_path: PathBuf::new(),
+            output_dir: PathBuf::new(),
+            agent: None,
+        };
+
+        let output_path = service.write_summary(summary, Some(&output_dir)).unwrap();
+
+        assert!(output_path.starts_with(&output_dir));
+        assert!(output_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("summary-"));
+        assert!(output_path.is_file());
+        assert_eq!(fs::read_to_string(&output_path).unwrap(), summary);
+    }
+
+    #[test]
+    fn generated_summary_name_starts_with_summary_prefix() {
+        let output_dir = unique_test_dir("quiet-water-name");
+
+        let output_path = SummaryService::timestamped_summary_path(&output_dir);
+
+        assert!(output_path.starts_with(&output_dir));
+        assert!(output_path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("summary-"));
+        assert_eq!(output_path.extension().and_then(|ext| ext.to_str()), Some("md"));
+    }
+
+    #[test]
+    fn write_summary_to_dir_overwrites_the_same_summary_file() {
+        let output_dir = unique_test_dir("quiet-water-refresh");
+        let service = SummaryService {
+            model_name: String::new(),
+            prompt_path: PathBuf::new(),
+            output_dir: PathBuf::new(),
+            agent: None,
+        };
+
+        let first = service.write_summary("# first", Some(&output_dir)).unwrap();
+        let second = service.write_summary("# second", Some(&output_dir)).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(fs::read_to_string(&second).unwrap(), "# second");
     }
 }
