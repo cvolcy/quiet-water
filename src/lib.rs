@@ -23,6 +23,10 @@ pub async fn run() -> Result<()> {
     let mut cumulative_transcript = String::new();
     let total_chunks = chunks.len();
 
+    let mut summary_service = summary::SummaryService::new()
+        .with_model(&args.model)
+        .with_output_dir(output_dir);
+
     println!("--- Transcribing {} chunks ---", total_chunks);
     for (index, chunk) in chunks.iter().enumerate() {
         let chunk_transcript = audio::transcribe_samples(chunk, whisper_model_path)?;
@@ -33,8 +37,8 @@ pub async fn run() -> Result<()> {
             cumulative_transcript.push(' ');
         }
 
-        let summary = summary::summarize_transcript(&cumulative_transcript, Some(&args.model)).await?;
-        let output_path = summary::write_summary(&summary, Some(output_dir))?;
+        let summary = summary_service.summarize_transcript(&cumulative_transcript).await?;
+        let output_path = summary_service.write_summary(&summary, Some(output_dir))?;
 
         println!("\n--- Summary after chunk {} of {} ---\n{summary}\n", index + 1, total_chunks);
         println!("Summary saved to {}", output_path.display());
