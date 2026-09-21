@@ -15,7 +15,7 @@ pub async fn run() -> Result<()> {
     let audio_path = args.input_audio.as_path();
     let output_dir = args.output_dir.as_path();
 
-    model::ensure_model_exists(whisper_model_path)?;
+    model::ensure_model_exists(whisper_model_path).await?;
 
     let samples = audio::read_wav_samples(audio_path)?;
     let chunks = audio::chunk_samples(&samples, 16_000, 30, 5);
