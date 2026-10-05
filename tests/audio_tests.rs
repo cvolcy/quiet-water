@@ -1,4 +1,7 @@
-use quiet_water::audio::{chunk_samples, read_wav_samples, to_duration_format};
+use quiet_water::audio::{
+    chunk_samples, offset_segments, read_wav_samples,
+    to_duration_format, TranscriptionSegment,
+};
 use hound::{SampleFormat, WavSpec, WavWriter};
 use std::{
     path::{Path, PathBuf},
@@ -69,14 +72,44 @@ fn chunks_samples_into_fixed_windows_with_overlap() {
     let chunks = chunk_samples(&samples, 16000, chunk_duration  as u32, 1);
 
     assert_eq!(chunks.len(), 4);
-    assert_eq!(chunks[0].len(), expected_chunk_len);
-    assert_eq!(chunks[1].len(), expected_chunk_len);
-    assert_eq!(chunks[2].len(), expected_chunk_len);
-    assert_eq!(chunks[3].len(), expected_chunk_len);
-    assert_eq!(chunks[0][0], 0.0);
-    assert_eq!(chunks[0][last_index(&chunks[0])], (expected_chunk_len - 1) as f32);
-    assert_eq!(chunks[1][0], 16_000.0);
-    assert_eq!(chunks[3][last_index(&chunks[3])],  (samples.len() - 1) as f32);
+    assert_eq!(chunks[0].samples.len(), expected_chunk_len);
+    assert_eq!(chunks[1].samples.len(), expected_chunk_len);
+    assert_eq!(chunks[2].samples.len(), expected_chunk_len);
+    assert_eq!(chunks[3].samples.len(), expected_chunk_len);
+    assert_eq!(chunks[0].samples[0], 0.0);
+    assert_eq!(chunks[0].samples[last_index(&chunks[0].samples)], (expected_chunk_len - 1) as f32);
+    assert_eq!(chunks[1].samples[0], 16_000.0);
+    assert_eq!(chunks[3].samples[last_index(&chunks[3].samples)],  (samples.len() - 1) as f32);
+}
+
+#[test]
+fn chunk_offsets_track_the_original_audio_timeline() {
+    let samples: Vec<f32> = (0..(16000 * 100)).map(|value| value as f32).collect();
+    let chunks = chunk_samples(&samples, 16_000, 30, 5);
+
+    assert_eq!(chunks.len(), 4);
+    assert_eq!(chunks[0].start_sample_offset, 0);
+    assert_eq!(chunks[1].start_sample_offset, 25 * 16_000);
+    assert_eq!(chunks[2].start_sample_offset, 50 * 16_000);
+    assert_eq!(chunks[3].start_sample_offset, 75 * 16_000);
+}
+
+#[test]
+fn segments_can_be_offset_to_the_full_audio_timeline() {
+    let segments = vec![
+        TranscriptionSegment { start_timestamp: 0, end_timestamp: 300, text: "First".to_string() },
+        TranscriptionSegment { start_timestamp: 300, end_timestamp: 700, text: "Second".to_string() },
+    ];
+
+    let offset = 25 * 100;
+    let shifted = offset_segments(&segments, offset);
+
+    assert_eq!(shifted[0].start_timestamp, 2500);
+    assert_eq!(shifted[0].end_timestamp, 2800);
+    assert_eq!(shifted[1].start_timestamp, 2800);
+    assert_eq!(shifted[1].end_timestamp, 3200);
+    assert_eq!(shifted[0].text, "First");
+    assert_eq!(shifted[1].text, "Second");
 }
 
 fn last_index<T>(slice: &[T]) -> usize {

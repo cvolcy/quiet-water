@@ -15,7 +15,7 @@ pub async fn run() -> Result<()> {
     let audio_path = args.input_audio.as_path();
     let output_dir = args.output_dir.as_path();
 
-    model::ensure_model_exists(whisper_model_path)?;
+    model::ensure_model_exists(whisper_model_path).await?;
 
     let samples = audio::read_wav_samples(audio_path)?;
     let chunks = audio::chunk_samples(&samples, 16_000, 30, 5);
@@ -29,7 +29,18 @@ pub async fn run() -> Result<()> {
 
     println!("--- Transcribing {} chunks ---", total_chunks);
     for (index, chunk) in chunks.iter().enumerate() {
-        let chunk_transcript = audio::transcribe_samples(chunk, whisper_model_path)?;
+        let chunk_offset_centiseconds = ((chunk.start_sample_offset as u64 * 100) / 16_000_u64)
+            .saturating_add(0);
+        let segment_records = audio::transcribe_segments(
+            &chunk.samples,
+            whisper_model_path,
+            chunk_offset_centiseconds,
+        )?;
+        let chunk_transcript = segment_records
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         let trimmed = chunk_transcript.trim();
 
         if !trimmed.is_empty() {

@@ -8,12 +8,38 @@ use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
 };
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioChunk {
+    pub start_sample_offset: usize,
+    pub samples: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptionSegment {
+    pub start_timestamp: u64,
+    pub end_timestamp: u64,
+    pub text: String,
+}
+
 pub fn transcribe_audio(audio_path: &Path, model_path: &Path) -> Result<String> {
     let samples = read_wav_samples(audio_path)?;
     transcribe_samples(&samples, model_path)
 }
 
 pub fn transcribe_samples(samples: &[f32], model_path: &Path) -> Result<String> {
+    let segments = transcribe_segments(samples, model_path, 0)?;
+    Ok(segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" "))
+}
+
+pub fn transcribe_segments(
+    samples: &[f32],
+    model_path: &Path,
+    chunk_offset_centiseconds: u64,
+) -> Result<Vec<TranscriptionSegment>> {
     let ctx = WhisperContext::new_with_params(
         model_path
             .to_str()
@@ -30,26 +56,49 @@ pub fn transcribe_samples(samples: &[f32], model_path: &Path) -> Result<String> 
     params.set_print_timestamps(false);
     params.set_print_realtime(false);
 
-    let transcript = Arc::new(Mutex::new(String::new()));
-    let callback_buffer = Arc::clone(&transcript);
+    let segments = Arc::new(Mutex::new(Vec::new()));
+    let callback_buffer = Arc::clone(&segments);
 
     params.set_segment_callback_safe_lossy(move |segment: whisper_rs::SegmentCallbackData| {
+        let start_timestamp = segment.start_timestamp as u64 + chunk_offset_centiseconds;
+        let end_timestamp = segment.end_timestamp as u64 + chunk_offset_centiseconds;
+        let text = segment.text.trim().to_string();
+
         println!(
             "[{} - {}]: {}",
-            to_duration_format(segment.start_timestamp),
-            to_duration_format(segment.end_timestamp),
-            segment.text
+            to_duration_format(start_timestamp),
+            to_duration_format(end_timestamp),
+            text
         );
 
-        let mut buffer = callback_buffer.lock().unwrap();
-        buffer.push_str(&segment.text);
-        buffer.push(' ');
+        if !text.is_empty() {
+            let mut buffer = callback_buffer.lock().unwrap();
+            buffer.push(TranscriptionSegment {
+                start_timestamp,
+                end_timestamp,
+                text,
+            });
+        }
     });
 
     println!("--- Transcribing (Streaming) ---");
     state.full(params, samples)?;
 
-    Ok(transcript.lock().unwrap().clone())
+    Ok(segments.lock().unwrap().clone())
+}
+
+pub fn offset_segments(
+    segments: &[TranscriptionSegment],
+    offset_centiseconds: u64,
+) -> Vec<TranscriptionSegment> {
+    segments
+        .iter()
+        .map(|segment| TranscriptionSegment {
+            start_timestamp: segment.start_timestamp + offset_centiseconds,
+            end_timestamp: segment.end_timestamp + offset_centiseconds,
+            text: segment.text.clone(),
+        })
+        .collect()
 }
 
 pub fn chunk_samples(
@@ -57,13 +106,16 @@ pub fn chunk_samples(
     sample_rate: u32,
     chunk_duration_seconds: u32,
     overlap_seconds: u32,
-) -> Vec<Vec<f32>> {
+) -> Vec<AudioChunk> {
     if samples.is_empty() {
         return Vec::new();
     }
 
     if sample_rate == 0 || chunk_duration_seconds == 0 {
-        return vec![samples.to_vec()];
+        return vec![AudioChunk {
+            start_sample_offset: 0,
+            samples: samples.to_vec(),
+        }];
     }
 
     let chunk_size = sample_rate as usize * chunk_duration_seconds as usize;
@@ -75,7 +127,10 @@ pub fn chunk_samples(
 
     while start < samples.len() {
         let end = (start + chunk_size).min(samples.len());
-        chunks.push(samples[start..end].to_vec());
+        chunks.push(AudioChunk {
+            start_sample_offset: start,
+            samples: samples[start..end].to_vec(),
+        });
 
         if end == samples.len() {
             break;
@@ -85,14 +140,20 @@ pub fn chunk_samples(
         if start >= samples.len() {
             let tail_start = samples.len().saturating_sub(chunk_size.min(samples.len()));
             if tail_start < samples.len() {
-                chunks.push(samples[tail_start..].to_vec());
+                chunks.push(AudioChunk {
+                    start_sample_offset: tail_start,
+                    samples: samples[tail_start..].to_vec(),
+                });
             }
             break;
         }
     }
 
     if chunks.is_empty() {
-        vec![samples.to_vec()]
+        vec![AudioChunk {
+            start_sample_offset: 0,
+            samples: samples.to_vec(),
+        }]
     } else {
         chunks
     }
@@ -139,7 +200,7 @@ pub fn read_wav_samples<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {
     Ok(samples?)
 }
 
-pub fn to_duration_format(centiseconds: i64) -> String {
+pub fn to_duration_format(centiseconds: u64) -> String {
     let total_secs = centiseconds / 100;
     let cs = centiseconds % 100;
 
