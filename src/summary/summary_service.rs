@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use clap::Parser;
 use rig::{
-    agent::Agent, client::{AgentClientExt, Nothing}, completion::{Prompt, PromptError}, providers::ollama,
+    agent::Agent, client::{AgentClientExt, Nothing}, completion::{Prompt, PromptError}, memory::InMemoryConversationMemory, providers::ollama,
 };
 use std::{collections::HashMap, fs, path::{Path, PathBuf}, sync::{Mutex, OnceLock}};
 
@@ -16,6 +16,7 @@ pub struct SummaryService {
     prompt_path: PathBuf,
     output_dir: PathBuf,
     agent: Option<Agent>,
+    agent_context: Option<String>
 }
 
 impl SummaryService {
@@ -28,6 +29,7 @@ impl SummaryService {
             prompt_path: PathBuf::from("./src/transcriptor.md"),
             output_dir: PathBuf::from("./outputs"),
             agent: None,
+            agent_context: None
         }
     }
 
@@ -46,6 +48,11 @@ impl SummaryService {
         self
     }
 
+    pub fn with_agent_context(mut self, context: impl Into<String>) -> Self {
+        self.agent_context = Some(context.into());
+        self
+    }
+
     fn load_transcription_instructions(path: &Path) -> Result<String> {
         let raw = fs::read_to_string(path).context("Missing transcription instruction file")?;
         let instructions = raw
@@ -61,21 +68,28 @@ impl SummaryService {
         Ok(instructions.to_string())
     }
 
-    pub async fn summarize_transcript(&mut self, raw_transcript: &str) -> Result<String, PromptError> {
+    pub async fn summarize_transcript(&mut self, raw_transcript: &str, transcription_id: Option<&str>) -> Result<String, PromptError> {
         let agent = self.get_agent();
-        Ok(agent.prompt(raw_transcript).await?)
+        let transcription_id = transcription_id.unwrap_or("default");
+        Ok(agent.prompt(raw_transcript).conversation(transcription_id).await?)
     }
 
     pub fn get_agent(&mut self) -> &Agent {
         if self.agent.is_none() {
             let instructions = SummaryService::load_transcription_instructions(Path::new(TRANSCRIPT_PROMPT_PATH))
                 .unwrap_or_else(|e| panic!("Failed to load transcription instructions: {}", e));
+            let mut context = String::new();
+            if self.agent_context.is_some() {
+                context = format!("Context: \n{}\n\n", self.agent_context.clone().unwrap());
+            }
+            let instructions = format!("{}{}", context, instructions);
                 
             let client = ollama::Client::new(Nothing)
                 .unwrap_or_else(|e| panic!("Failed to create Ollama client: {}", e));
             
             let agent = client.agent(self.model_name.clone())
                 .preamble(&instructions)
+                .memory(InMemoryConversationMemory::new())
                 .build();
 
             self.agent = Some(agent);
@@ -242,6 +256,7 @@ mod tests {
             prompt_path: PathBuf::new(),
             output_dir: PathBuf::new(),
             agent: None,
+            agent_context: None,
         };
 
         let output_path = service.write_summary(summary, Some(&output_dir)).unwrap();
@@ -279,6 +294,7 @@ mod tests {
             prompt_path: PathBuf::new(),
             output_dir: PathBuf::new(),
             agent: None,
+            agent_context: None,
         };
 
         let first = service.write_summary("# first", Some(&output_dir)).unwrap();

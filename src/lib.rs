@@ -37,7 +37,7 @@ pub async fn run() -> Result<()> {
             cumulative_transcript.push(' ');
         }
 
-        let summary = summary_service.summarize_transcript(&cumulative_transcript).await?;
+        let summary = summary_service.summarize_transcript(&cumulative_transcript, None).await?;
         let output_path = summary_service.write_summary(&summary, Some(output_dir))?;
 
         println!("\n--- Summary after chunk {} of {} ---\n{summary}\n", index + 1, total_chunks);
