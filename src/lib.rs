@@ -6,6 +6,7 @@ pub mod summary;
 use anyhow::Result;
 use clap::Parser;
 use cli::CliArgs;
+use lofty::{file::TaggedFileExt, probe::Probe, tag::{Accessor, ItemKey}};
 
 pub async fn run() -> Result<()> {
     whisper_rs::install_logging_hooks();
@@ -14,6 +15,15 @@ pub async fn run() -> Result<()> {
     let whisper_model_path = args.whisper_model_path.as_path();
     let audio_path = args.input_audio.as_path();
     let output_dir = args.output_dir.as_path();
+
+    let audio = Probe::open(audio_path)?.read()?;    
+    let context = if let Some(tag) = audio.first_tag() {
+        let title = tag.title().unwrap_or_default();
+        let comments = tag.get_string(ItemKey::Comment).unwrap_or("No Comment");
+        Some(format!("{}\n{}", title, comments))
+    } else {
+        None
+    };
 
     model::ensure_model_exists(whisper_model_path).await?;
 
@@ -27,6 +37,10 @@ pub async fn run() -> Result<()> {
         .with_model(&args.model)
         .with_output_dir(output_dir);
 
+    if context.is_some() {
+        summary_service = summary_service.with_agent_context(context.clone().unwrap());
+    }
+
     println!("--- Transcribing {} chunks ---", total_chunks);
     for (index, chunk) in chunks.iter().enumerate() {
         let chunk_offset_centiseconds = ((chunk.start_sample_offset as u64 * 100) / 16_000_u64)
@@ -35,6 +49,7 @@ pub async fn run() -> Result<()> {
             &chunk.samples,
             whisper_model_path,
             chunk_offset_centiseconds,
+            context.clone(),
         )?;
         let chunk_transcript = segment_records
             .iter()

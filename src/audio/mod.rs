@@ -27,7 +27,7 @@ pub fn transcribe_audio(audio_path: &Path, model_path: &Path) -> Result<String> 
 }
 
 pub fn transcribe_samples(samples: &[f32], model_path: &Path) -> Result<String> {
-    let segments = transcribe_segments(samples, model_path, 0)?;
+    let segments = transcribe_segments(samples, model_path, 0, None)?;
     Ok(segments
         .iter()
         .map(|segment| segment.text.as_str())
@@ -39,6 +39,7 @@ pub fn transcribe_segments(
     samples: &[f32],
     model_path: &Path,
     chunk_offset_centiseconds: u64,
+    prompt: Option<String>,
 ) -> Result<Vec<TranscriptionSegment>> {
     let ctx = WhisperContext::new_with_params(
         model_path
@@ -55,6 +56,9 @@ pub fn transcribe_segments(
     params.set_print_progress(false);
     params.set_print_timestamps(false);
     params.set_print_realtime(false);
+    if prompt.is_some() {
+        params.set_initial_prompt(prompt.unwrap().as_str());
+    }
 
     let segments = Arc::new(Mutex::new(Vec::new()));
     let callback_buffer = Arc::clone(&segments);
