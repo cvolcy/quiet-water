@@ -6,7 +6,11 @@ pub mod summary;
 use anyhow::Result;
 use clap::Parser;
 use cli::CliArgs;
-use lofty::{file::TaggedFileExt, probe::Probe, tag::{Accessor, ItemKey}};
+use lofty::{
+    file::TaggedFileExt,
+    probe::Probe,
+    tag::{Accessor, ItemKey},
+};
 
 pub async fn run() -> Result<()> {
     whisper_rs::install_logging_hooks();
@@ -16,7 +20,7 @@ pub async fn run() -> Result<()> {
     let audio_path = args.input_audio.as_path();
     let output_dir = args.output_dir.as_path();
 
-    let audio = Probe::open(audio_path)?.read()?;    
+    let audio = Probe::open(audio_path)?.read()?;
     let context = if let Some(tag) = audio.first_tag() {
         let title = tag.title().unwrap_or_default();
         let comments = tag.get_string(ItemKey::Comment).unwrap_or("No Comment");
@@ -30,7 +34,7 @@ pub async fn run() -> Result<()> {
     let samples = audio::read_wav_samples(audio_path)?;
     let chunks = audio::chunk_samples(&samples, 16_000, 30, 5);
 
-    let mut cumulative_transcript = String::new();
+    let mut cumulative_segments = Vec::new();
     let total_chunks = chunks.len();
 
     let mut summary_service = summary::SummaryService::new()
@@ -43,30 +47,32 @@ pub async fn run() -> Result<()> {
 
     println!("--- Transcribing {} chunks ---", total_chunks);
     for (index, chunk) in chunks.iter().enumerate() {
-        let chunk_offset_centiseconds = ((chunk.start_sample_offset as u64 * 100) / 16_000_u64)
-            .saturating_add(0);
+        let chunk_offset_centiseconds =
+            ((chunk.start_sample_offset as u64 * 100) / 16_000_u64).saturating_add(0);
         let segment_records = audio::transcribe_segments(
             &chunk.samples,
             whisper_model_path,
             chunk_offset_centiseconds,
             context.clone(),
         )?;
-        let chunk_transcript = segment_records
+        cumulative_segments.extend(segment_records);
+        cumulative_segments = audio::merge_segments(&cumulative_segments);
+        let cumulative_transcript = cumulative_segments
             .iter()
             .map(|segment| segment.text.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        let trimmed = chunk_transcript.trim();
 
-        if !trimmed.is_empty() {
-            cumulative_transcript.push_str(trimmed);
-            cumulative_transcript.push(' ');
-        }
-
-        let summary = summary_service.summarize_transcript(&cumulative_transcript, None).await?;
+        let summary = summary_service
+            .summarize_transcript(&cumulative_transcript, None)
+            .await?;
         let output_path = summary_service.write_summary(&summary, Some(output_dir))?;
 
-        println!("\n--- Summary after chunk {} of {} ---\n{summary}\n", index + 1, total_chunks);
+        println!(
+            "\n--- Summary after chunk {} of {} ---\n{summary}\n",
+            index + 1,
+            total_chunks
+        );
         println!("Summary saved to {}", output_path.display());
     }
 

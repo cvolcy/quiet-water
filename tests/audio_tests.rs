@@ -1,8 +1,8 @@
-use quiet_water::audio::{
-    chunk_samples, offset_segments, read_wav_samples,
-    to_duration_format, TranscriptionSegment,
-};
 use hound::{SampleFormat, WavSpec, WavWriter};
+use quiet_water::audio::{
+    TranscriptionSegment, chunk_samples, merge_segments, offset_segments, read_wav_samples,
+    to_duration_format,
+};
 use std::{
     path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
@@ -69,7 +69,7 @@ fn chunks_samples_into_fixed_windows_with_overlap() {
     let chunk_duration = 2;
     let chunk_rate = 16_000.0;
     let expected_chunk_len = chunk_duration * chunk_rate as usize;
-    let chunks = chunk_samples(&samples, 16000, chunk_duration  as u32, 1);
+    let chunks = chunk_samples(&samples, 16000, chunk_duration as u32, 1);
 
     assert_eq!(chunks.len(), 4);
     assert_eq!(chunks[0].samples.len(), expected_chunk_len);
@@ -77,9 +77,15 @@ fn chunks_samples_into_fixed_windows_with_overlap() {
     assert_eq!(chunks[2].samples.len(), expected_chunk_len);
     assert_eq!(chunks[3].samples.len(), expected_chunk_len);
     assert_eq!(chunks[0].samples[0], 0.0);
-    assert_eq!(chunks[0].samples[last_index(&chunks[0].samples)], (expected_chunk_len - 1) as f32);
+    assert_eq!(
+        chunks[0].samples[last_index(&chunks[0].samples)],
+        (expected_chunk_len - 1) as f32
+    );
     assert_eq!(chunks[1].samples[0], 16_000.0);
-    assert_eq!(chunks[3].samples[last_index(&chunks[3].samples)],  (samples.len() - 1) as f32);
+    assert_eq!(
+        chunks[3].samples[last_index(&chunks[3].samples)],
+        (samples.len() - 1) as f32
+    );
 }
 
 #[test]
@@ -97,8 +103,16 @@ fn chunk_offsets_track_the_original_audio_timeline() {
 #[test]
 fn segments_can_be_offset_to_the_full_audio_timeline() {
     let segments = vec![
-        TranscriptionSegment { start_timestamp: 0, end_timestamp: 300, text: "First".to_string() },
-        TranscriptionSegment { start_timestamp: 300, end_timestamp: 700, text: "Second".to_string() },
+        TranscriptionSegment {
+            start_timestamp: 0,
+            end_timestamp: 300,
+            text: "First".to_string(),
+        },
+        TranscriptionSegment {
+            start_timestamp: 300,
+            end_timestamp: 700,
+            text: "Second".to_string(),
+        },
     ];
 
     let offset = 25 * 100;
@@ -110,6 +124,98 @@ fn segments_can_be_offset_to_the_full_audio_timeline() {
     assert_eq!(shifted[1].end_timestamp, 3200);
     assert_eq!(shifted[0].text, "First");
     assert_eq!(shifted[1].text, "Second");
+}
+
+#[test]
+fn merges_segments_in_chronological_order() {
+    let segments = vec![
+        TranscriptionSegment {
+            start_timestamp: 400,
+            end_timestamp: 600,
+            text: "Later".to_string(),
+        },
+        TranscriptionSegment {
+            start_timestamp: 0,
+            end_timestamp: 200,
+            text: "First".to_string(),
+        },
+        TranscriptionSegment {
+            start_timestamp: 200,
+            end_timestamp: 400,
+            text: "Middle".to_string(),
+        },
+    ];
+
+    let merged = merge_segments(&segments);
+
+    assert_eq!(
+        merged
+            .iter()
+            .map(|segment| segment.text.as_str())
+            .collect::<Vec<_>>(),
+        ["First", "Middle", "Later"]
+    );
+}
+
+#[test]
+fn removes_overlapping_duplicate_text_but_keeps_a_later_repetition() {
+    let first_chunk = vec![TranscriptionSegment {
+        start_timestamp: 2_500,
+        end_timestamp: 3_000,
+        text: "Boundary phrase".to_string(),
+    }];
+    let mut accumulated = merge_segments(&first_chunk);
+    accumulated.extend([
+        TranscriptionSegment {
+            start_timestamp: 2_700,
+            end_timestamp: 3_200,
+            text: "Boundary phrase".to_string(),
+        },
+        TranscriptionSegment {
+            start_timestamp: 2_800,
+            end_timestamp: 3_100,
+            text: "Distinct overlapping phrase".to_string(),
+        },
+        TranscriptionSegment {
+            start_timestamp: 4_000,
+            end_timestamp: 4_300,
+            text: "Boundary phrase".to_string(),
+        },
+    ]);
+
+    let merged = merge_segments(&accumulated);
+
+    assert_eq!(merged.len(), 3);
+    assert_eq!(merged[0].start_timestamp, 2_500);
+    assert_eq!(merged[1].text, "Distinct overlapping phrase");
+    assert_eq!(merged[2].start_timestamp, 4_000);
+}
+
+#[test]
+fn ignores_empty_and_whitespace_only_segments() {
+    let segments = vec![
+        TranscriptionSegment {
+            start_timestamp: 0,
+            end_timestamp: 100,
+            text: String::new(),
+        },
+        TranscriptionSegment {
+            start_timestamp: 100,
+            end_timestamp: 200,
+            text: " \t\n ".to_string(),
+        },
+        TranscriptionSegment {
+            start_timestamp: 200,
+            end_timestamp: 300,
+            text: "  Kept  ".to_string(),
+        },
+    ];
+
+    let merged = merge_segments(&segments);
+
+    assert_eq!(merged.len(), 1);
+    assert_eq!(merged[0].text, "Kept");
+    assert!(merge_segments(&[]).is_empty());
 }
 
 fn last_index<T>(slice: &[T]) -> usize {

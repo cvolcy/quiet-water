@@ -1,12 +1,11 @@
 use anyhow::{Context, Result};
 use hound::{SampleFormat, WavReader};
 use std::{
+    collections::HashMap,
     path::Path,
     sync::{Arc, Mutex},
 };
-use whisper_rs::{
-    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters,
-};
+use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioChunk {
@@ -42,9 +41,7 @@ pub fn transcribe_segments(
     prompt: Option<String>,
 ) -> Result<Vec<TranscriptionSegment>> {
     let ctx = WhisperContext::new_with_params(
-        model_path
-            .to_str()
-            .context("Invalid UTF-8 in model path")?,
+        model_path.to_str().context("Invalid UTF-8 in model path")?,
         WhisperContextParameters::default(),
     )?;
     let mut state = ctx.create_state()?;
@@ -103,6 +100,39 @@ pub fn offset_segments(
             text: segment.text.clone(),
         })
         .collect()
+}
+
+pub fn merge_segments(segments: &[TranscriptionSegment]) -> Vec<TranscriptionSegment> {
+    let mut ordered_segments = segments
+        .iter()
+        .filter_map(|segment| {
+            let text = segment.text.trim();
+            (!text.is_empty()).then(|| TranscriptionSegment {
+                text: text.to_string(),
+                ..segment.clone()
+            })
+        })
+        .collect::<Vec<_>>();
+
+    ordered_segments.sort_by_key(|segment| (segment.start_timestamp, segment.end_timestamp));
+
+    let mut latest_end_by_text = HashMap::<String, u64>::new();
+    let mut merged = Vec::with_capacity(ordered_segments.len());
+    for segment in ordered_segments {
+        let is_overlapping_duplicate = latest_end_by_text
+            .get(&segment.text)
+            .is_some_and(|latest_end| segment.start_timestamp < *latest_end);
+        latest_end_by_text
+            .entry(segment.text.clone())
+            .and_modify(|latest_end| *latest_end = (*latest_end).max(segment.end_timestamp))
+            .or_insert(segment.end_timestamp);
+
+        if !is_overlapping_duplicate {
+            merged.push(segment);
+        }
+    }
+
+    merged
 }
 
 pub fn chunk_samples(
@@ -168,9 +198,7 @@ pub fn read_wav_samples<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {
     let spec = reader.spec();
 
     if spec.sample_rate != 16000 || spec.channels != 1 {
-        return Err(anyhow::anyhow!(
-            "Audio file must be 16kHz mono WAV format."
-        ));
+        return Err(anyhow::anyhow!("Audio file must be 16kHz mono WAV format."));
     }
 
     let samples: Result<Vec<f32>, _> = match (spec.sample_format, spec.bits_per_sample) {
@@ -197,7 +225,7 @@ pub fn read_wav_samples<P: AsRef<Path>>(path: P) -> Result<Vec<f32>> {
                 "Unsupported audio format: {:?}, {} bits",
                 format,
                 bits
-            ))
+            ));
         }
     };
 
